@@ -4,6 +4,7 @@ import TechnologyTabs from './components/TechnologyTabs';
 import ArchitectureDiagram from './components/ArchitectureDiagram';
 import DetailPanel from './components/DetailPanel';
 import ReferenceDirectory, { type ReferenceSelection } from './components/ReferenceDirectory';
+import { parseAppSelection, selectTechnology, serializeAppSelection } from './appState';
 
 const DEFAULT_TECH = '4g';
 
@@ -25,19 +26,14 @@ export default function App() {
 
   // Read initial state from URL
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const t = params.get('tech');
-    const n = params.get('node');
-    if (t && technologies.some((x) => x.id === t)) setTechId(t);
-    if (n) setNodeId(n);
+    const selection = parseAppSelection(window.location.search, technologies, DEFAULT_TECH);
+    setTechId(selection.technologyId);
+    setNodeId(selection.nodeId);
   }, []);
 
   // Sync state to URL
   useEffect(() => {
-    const params = new URLSearchParams();
-    params.set('tech', techId);
-    if (nodeId) params.set('node', nodeId);
-    window.history.replaceState(null, '', `?${params.toString()}`);
+    window.history.replaceState(null, '', serializeAppSelection(techId, nodeId));
   }, [techId, nodeId]);
 
   useEffect(() => {
@@ -97,8 +93,9 @@ export default function App() {
             technologies={technologies}
             activeId={techId}
             onChange={(id) => {
-              setTechId(id);
-              setNodeId(null);
+              const selection = selectTechnology(id);
+              setTechId(selection.technologyId);
+              setNodeId(selection.nodeId);
             }}
           />
         </div>
