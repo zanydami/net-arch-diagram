@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { technologies } from './data/technologies';
 import TechnologyTabs from './components/TechnologyTabs';
 import ArchitectureDiagram from './components/ArchitectureDiagram';
-import DetailPanel from './components/DetailPanel';
+import AuthControls from './components/AuthControls';
 import ReferenceDirectory, { type ReferenceSelection } from './components/ReferenceDirectory';
 import { parseAppSelection, selectTechnology, serializeAppSelection } from './appState';
 
@@ -45,10 +45,6 @@ export default function App() {
   }, [theme]);
 
   const tech = technologies.find((t) => t.id === techId) ?? technologies[0];
-  const selectedNode = nodeId
-    ? tech.nodes.find((n) => n.id === nodeId) ?? null
-    : null;
-
   const openDirectory = (selection: ReferenceSelection | null = null) => {
     setDirectoryRequest({ technologyId: techId, selection });
     setDirectoryOpen(true);
@@ -66,6 +62,7 @@ export default function App() {
               </h1>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <AuthControls />
               <button
                 type="button"
                 onClick={() => openDirectory()}

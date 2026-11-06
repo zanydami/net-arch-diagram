@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { NetNode, Technology } from '../types';
+import { useAuth } from '../hooks/useAuth';
+import { supabase } from '../lib/supabase';
 import { interfaceDescriptions } from '../data/interfaceDescriptions';
 import {
   interfaceReferenceDetails,
@@ -20,6 +22,14 @@ export interface ReferenceSelection {
   id: string;
 }
 
+interface ReferenceContent {
+  description: string;
+  expansion: string;
+  details: string;
+}
+
+type ReferenceOverrides = Record<string, ReferenceContent>;
+
 interface Props {
   technologies: Technology[];
   technologyId: string;
@@ -37,25 +47,101 @@ export default function ReferenceDirectory({
   const [kind, setKind] = useState<ReferenceKind>(initialSelection?.kind ?? 'node');
   const [selectedId, setSelectedId] = useState(initialSelection?.id ?? '');
   const [query, setQuery] = useState('');
+  const [overrides, setOverrides] = useState<ReferenceOverrides>({});
+  const [overridesLoading, setOverridesLoading] = useState(false);
+  const [overridesError, setOverridesError] = useState('');
+  const { canEdit } = useAuth();
   const technology = technologies.find((item) => item.id === activeTechnologyId) ?? technologies[0];
+
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+
+    const loadOverrides = async () => {
+      setOverridesLoading(true);
+      setOverridesError('');
+      const { data, error } = await supabase
+        .from('reference_entries')
+        .select('kind, entry_id, description, expansion, details')
+        .eq('technology_id', activeTechnologyId);
+
+      if (!active) return;
+      if (error) {
+        setOverridesError(error.message);
+      } else {
+        setOverrides(Object.fromEntries(
+          (data ?? []).map((entry) => [
+            referenceKey(entry.kind, entry.entry_id),
+            {
+              description: entry.description,
+              expansion: entry.expansion,
+              details: entry.details,
+            },
+          ])
+        ));
+      }
+      setOverridesLoading(false);
+    };
+
+    void loadOverrides();
+    return () => {
+      active = false;
+    };
+  }, [activeTechnologyId]);
+
+  const saveOverride = async (
+    entryKind: ReferenceKind,
+    entryId: string,
+    content: ReferenceContent
+  ) => {
+    if (!supabase) throw new Error('Supabase не настроен.');
+    const { data, error } = await supabase
+      .from('reference_entries')
+      .upsert({
+        technology_id: technology.id,
+        kind: entryKind,
+        entry_id: entryId,
+        ...content,
+      }, { onConflict: 'technology_id,kind,entry_id' })
+      .select('description, expansion, details')
+      .single();
+
+    if (error) throw error;
+    setOverrides((current) => ({
+      ...current,
+      [referenceKey(entryKind, entryId)]: data,
+    }));
+  };
 
   const interfaceNames = Array.from(new Set(technology.nodes.flatMap((node) => node.interfaces))).sort();
   const entries = kind === 'node'
-    ? technology.nodes.map((node) => ({
-        id: node.id,
-        title: node.label,
-        subtitle: nodeReferenceDetails[`${technology.id}:${node.id}`]?.expansion ?? node.fullName,
-        searchText: `${node.label} ${node.fullName} ${node.role} ${nodeReferenceDetails[`${technology.id}:${node.id}`]?.expansion ?? ''} ${nodeReferenceDetails[`${technology.id}:${node.id}`]?.details ?? ''}`,
-      }))
-    : interfaceNames.map((name) => ({
-        id: name,
-        title: name,
-        subtitle: interfaceDescriptions[name] ?? 'Интерфейс обмена данными между узлами сети.',
-        searchText: `${name} ${interfaceDescriptions[name] ?? ''} ${interfaceReferenceDetails[name]?.expansion ?? ''} ${interfaceReferenceDetails[name]?.details ?? ''} ${technology.nodes
-          .filter((node) => node.interfaces.includes(name))
-          .map((node) => `${node.label} ${node.role}`)
-          .join(' ')}`,
-      }));
+    ? technology.nodes.map((node) => {
+        const override = overrides[referenceKey('node', node.id)];
+        const details = nodeReferenceDetails[`${technology.id}:${node.id}`];
+        return {
+          id: node.id,
+          title: node.label,
+          subtitle: override?.expansion || details?.expansion || node.fullName,
+          searchText: [node.label, node.fullName, node.role, override?.description,
+            override?.expansion, override?.details, details?.expansion, details?.details].join(' '),
+        };
+      })
+    : interfaceNames.map((name) => {
+        const override = overrides[referenceKey('interface', name)];
+        const details = technologyInterfaceReferenceDetails[`${technology.id}:${name}`]
+          ?? interfaceReferenceDetails[name];
+        return {
+          id: name,
+          title: name,
+          subtitle: override?.description || interfaceDescriptions[name]
+            || 'Интерфейс обмена данными между узлами сети.',
+          searchText: [name, interfaceDescriptions[name], override?.description,
+            override?.expansion, override?.details, details?.expansion, details?.details,
+            ...technology.nodes
+              .filter((node) => node.interfaces.includes(name))
+              .map((node) => `${node.label} ${node.role}`)].join(' '),
+        };
+      });
 
   const filteredEntries = entries.filter((entry) =>
     entry.searchText.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
@@ -195,11 +281,22 @@ export default function ReferenceDirectory({
           </aside>
 
           <article className="min-h-0 overflow-y-auto p-4 sm:p-6">
+            {overridesError && (
+              <p role="status" className="mb-4 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                Не удалось загрузить общие правки. Показаны исходные данные.
+              </p>
+            )}
+            {overridesLoading && (
+              <p role="status" className="mb-4 text-xs text-slate-500">Загрузка правок…</p>
+            )}
             {selectedNode ? (
               <NodeReference
                 node={selectedNode}
                 technology={technology}
                 sources={architectureSources}
+                override={overrides[referenceKey('node', selectedNode.id)]}
+                canEdit={canEdit}
+                onSave={(content) => saveOverride('node', selectedNode.id, content)}
                 onSelectInterface={(name) => {
                   setKind('interface');
                   setSelectedId(name);
@@ -213,6 +310,9 @@ export default function ReferenceDirectory({
                 nodes={interfaceNodes}
                 links={interfaceLinks}
                 sources={selectedInterfaceSources}
+                override={overrides[referenceKey('interface', selectedInterface)]}
+                canEdit={canEdit}
+                onSave={(content) => saveOverride('interface', selectedInterface, content)}
               />
             ) : (
               <p className="text-sm text-slate-500">Выберите запись или измените запрос поиска.</p>
@@ -228,11 +328,17 @@ function NodeReference({
   node,
   technology,
   sources,
+  override,
+  canEdit,
+  onSave,
   onSelectInterface,
 }: {
   node: NetNode;
   technology: Technology;
   sources: SpecificationSource[];
+  override?: ReferenceContent;
+  canEdit: boolean;
+  onSave: (content: ReferenceContent) => Promise<void>;
   onSelectInterface: (name: string) => void;
 }) {
   const layer = LAYERS.find((item) => item.id === node.layer)!;
@@ -259,22 +365,33 @@ function NodeReference({
       <h3 className="mt-3 text-xl font-semibold text-slate-900">{node.label}</h3>
       <section className="mt-4">
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Кратко</h4>
-        <p className="max-w-2xl text-sm leading-relaxed text-slate-700">{node.role}</p>
+        <p className="max-w-2xl text-sm leading-relaxed text-slate-700">{override?.description || node.role}</p>
       </section>
       <section className="mt-4">
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
           Расшифровка
         </h4>
-        <p className="text-sm text-slate-600">{details?.expansion ?? node.fullName}</p>
+        <p className="text-sm text-slate-600">{override?.expansion || details?.expansion || node.fullName}</p>
       </section>
       <section className="mt-5 border-t border-slate-100 pt-4">
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
           Подробное описание
         </h4>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-700">
-          {details?.details ?? node.role}
+          {override?.details || details?.details || node.role}
         </p>
       </section>
+      {canEdit && (
+        <ReferenceEditor
+          key={`${technology.id}:node:${node.id}`}
+          initialValue={{
+            description: override?.description ?? node.role,
+            expansion: override?.expansion ?? details?.expansion ?? node.fullName,
+            details: override?.details ?? details?.details ?? node.role,
+          }}
+          onSave={onSave}
+        />
+      )}
 
       {node.interfaces.length > 0 && (
         <section className="mt-6">
@@ -324,12 +441,18 @@ function InterfaceReference({
   nodes,
   links,
   sources,
+  override,
+  canEdit,
+  onSave,
 }: {
   name: string;
   technology: Technology;
   nodes: NetNode[];
   links: Technology['links'];
   sources: SpecificationSource[];
+  override?: ReferenceContent;
+  canEdit: boolean;
+  onSave: (content: ReferenceContent) => Promise<void>;
 }) {
   const details =
     technologyInterfaceReferenceDetails[`${technology.id}:${name}`] ?? interfaceReferenceDetails[name];
@@ -341,7 +464,7 @@ function InterfaceReference({
       <section className="mt-4">
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Кратко</h4>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-700">
-        {interfaceDescriptions[name] ?? 'Интерфейс обмена данными между сетевыми узлами.'}
+        {override?.description || interfaceDescriptions[name] || 'Интерфейс обмена данными между сетевыми узлами.'}
         </p>
       </section>
       <section className="mt-4">
@@ -349,7 +472,7 @@ function InterfaceReference({
           Расшифровка
         </h4>
         <p className="text-sm text-slate-600">
-          {details?.expansion ?? 'Стандартизованное обозначение интерфейса.'}
+          {override?.expansion || details?.expansion || 'Стандартизованное обозначение интерфейса.'}
         </p>
       </section>
       <section className="mt-5 border-t border-slate-100 pt-4">
@@ -357,9 +480,20 @@ function InterfaceReference({
           Подробное описание
         </h4>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-700">
-          {details?.details ?? interfaceDescriptions[name] ?? 'Интерфейс обмена данными между сетевыми узлами.'}
+          {override?.details || details?.details || interfaceDescriptions[name] || 'Интерфейс обмена данными между сетевыми узлами.'}
         </p>
       </section>
+      {canEdit && (
+        <ReferenceEditor
+          key={`${technology.id}:interface:${name}`}
+          initialValue={{
+            description: override?.description ?? interfaceDescriptions[name] ?? '',
+            expansion: override?.expansion ?? details?.expansion ?? 'Стандартизованное обозначение интерфейса.',
+            details: override?.details ?? details?.details ?? interfaceDescriptions[name] ?? '',
+          }}
+          onSave={onSave}
+        />
+      )}
 
       <section className="mt-6">
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
@@ -428,5 +562,90 @@ function SourceList({ sources }: { sources: SpecificationSource[] }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+function referenceKey(kind: ReferenceKind | string, id: string) {
+  return `${kind}:${id}`;
+}
+
+function ReferenceEditor({
+  initialValue,
+  onSave,
+}: {
+  initialValue: ReferenceContent;
+  onSave: (content: ReferenceContent) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [content, setContent] = useState(initialValue);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(content);
+      setEditing(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить изменения.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="mt-5 rounded-md border border-teal-700/30 px-3 py-1.5 text-xs font-medium text-teal-800 transition hover:bg-teal-50"
+      >
+        Редактировать запись
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-5 space-y-3 rounded-md border border-teal-700/20 bg-teal-50/50 p-3">
+      {([
+        ['description', 'Краткое описание'],
+        ['expansion', 'Расшифровка'],
+        ['details', 'Подробное описание'],
+      ] as const).map(([field, label]) => (
+        <label key={field} className="block text-xs font-medium text-slate-600">
+          {label}
+          <textarea
+            required
+            rows={field === 'details' ? 5 : 2}
+            maxLength={field === 'details' ? 12000 : 2000}
+            value={content[field]}
+            onChange={(event) => setContent((current) => ({ ...current, [field]: event.target.value }))}
+            className="mt-1 w-full resize-y rounded border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+          />
+        </label>
+      ))}
+      {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setContent(initialValue);
+            setEditing(false);
+          }}
+          className="rounded border border-slate-300 px-3 py-1.5 text-xs text-slate-700"
+        >
+          Отмена
+        </button>
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded bg-teal-800 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+        >
+          {saving ? 'Сохранение…' : 'Сохранить'}
+        </button>
+      </div>
+    </form>
   );
 }
