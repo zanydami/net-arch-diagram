@@ -104,6 +104,7 @@ export default function App() {
       <main className="mx-auto w-full max-w-[1800px] px-3 py-4 sm:px-5">
         <p className="tech-summary mb-4 max-w-5xl text-sm leading-relaxed text-slate-600">{tech.summary}</p>
         <ArchitectureDiagram
+          key={tech.id}
           technology={tech}
           selectedNodeId={nodeId}
           onNodeClick={(id) => setNodeId(id === nodeId ? null : id)}
@@ -111,6 +112,17 @@ export default function App() {
           onShowDetails={(kind, id) => openDirectory({ kind, id })}
         />
       </main>
+      <footer className="mx-auto w-full max-w-[1800px] px-5 pb-3 text-center text-[10px]">
+        <a
+          href="https://github.com/zanydami/net-arch-diagram"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-slate-500 opacity-50 transition duration-200 hover:-translate-y-0.5 hover:text-rose-500 hover:opacity-100 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+        >
+          by Danya
+          <span aria-hidden="true" className="transition-transform duration-200 hover:scale-110">♥</span>
+        </a>
+      </footer>
       {directoryOpen && (
         <ReferenceDirectory
           technologies={technologies}

@@ -202,7 +202,8 @@ export default function ArchitectureDiagram({
   });
 
   return (
-    <div className="relative overflow-visible">
+    <div className="architecture-diagram">
+      <div className="desktop-architecture relative overflow-visible">
       <svg
         viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
         className="block h-auto w-full min-h-[500px]"
@@ -485,6 +486,85 @@ export default function ArchitectureDiagram({
           </div>
         </div>
       )}
+      </div>
+
+      <div className="mobile-architecture">
+        {LAYERS.map((layer) => {
+          const layerNodes = technology.nodes.filter((node) => node.layer === layer.id);
+          if (layerNodes.length === 0) return null;
+
+          return (
+            <section key={layer.id} className="mobile-layer">
+              <h2 className="mobile-layer-heading">
+                <span className="mobile-layer-marker" style={{ backgroundColor: layer.color }} />
+                {layer.label}
+              </h2>
+              <ul>
+                {layerNodes.map((node) => {
+                  const selected = selectedNodeId === node.id;
+                  return (
+                    <li key={node.id} className="mobile-node-item">
+                      <button
+                        type="button"
+                        aria-expanded={selected}
+                        onClick={() => onNodeClick(node.id)}
+                        className="mobile-node-button"
+                      >
+                        <span className="mobile-node-title">
+                          <strong>{node.label}</strong>
+                          <span>{node.fullName}</span>
+                        </span>
+                        <span className="mobile-node-role">{node.role}</span>
+                      </button>
+                      {selected && (
+                        <div className="mobile-node-details">
+                          <DetailPanel
+                            node={node}
+                            onClose={onClose}
+                            onMore={() => onShowDetails('node', node.id)}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          );
+        })}
+
+        <section className="mobile-connections">
+          <h2 className="mobile-layer-heading">Связи</h2>
+          <ul>
+            {technology.links.map((link) => {
+              const from = technology.nodes.find((node) => node.id === link.from);
+              const to = technology.nodes.find((node) => node.id === link.to);
+              if (!from || !to) return null;
+
+              return (
+                <li key={link.id} className="mobile-connection">
+                  <span className="mobile-connection-endpoints">
+                    <span>{from.label}</span>
+                    <span aria-hidden="true">→</span>
+                    <span>{to.label}</span>
+                  </span>
+                  {link.label ? (
+                    <button
+                      type="button"
+                      onClick={() => onShowDetails('interface', link.label!)}
+                      className="mobile-interface-button"
+                    >
+                      {link.label}
+                    </button>
+                  ) : (
+                    <span className="mobile-transport-label">Транспорт</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      </div>
     </div>
   );
 }
